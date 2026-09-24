@@ -12,13 +12,11 @@ class MiniMaple {
 
         const parser = new Parser(expression, variable);
         const node = parser.parse();
-
         parser.expectEnd();
 
         return node.derivative(variable).simplify().toString();
     }
 }
-
 
 class Tokenizer {
     constructor(input, variable) {
@@ -36,6 +34,7 @@ class Tokenizer {
     next() {
         this._skipWhitespace();
         if (this.pos >= this.input.length) return null;
+
         const ch = this.input[this.pos];
 
         if (/[0-9]/.test(ch)) {
@@ -50,9 +49,6 @@ class Tokenizer {
             let name = '';
             while (this.pos < this.input.length && /[a-zA-Z]/.test(this.input[this.pos])) {
                 name += this.input[this.pos++];
-            }
-            if (name.length > 1) {
-                throw new Error(`Unsupported function or identifier: ${name}`);
             }
             return {type: 'var', value: name};
         }
@@ -94,8 +90,11 @@ class Parser {
 
     parseExpr() {
         let left = this.parseTerm();
-        while (this.current && this.current.type === 'op'
-               && (this.current.value === '+' || this.current.value === '-')) {
+        while (
+            this.current &&
+            this.current.type === 'op' &&
+            (this.current.value === '+' || this.current.value === '-')
+        ) {
             const op = this.current.value;
             this.advance();
             const right = this.parseTerm();
@@ -105,21 +104,11 @@ class Parser {
     }
 
     parseTerm() {
-        let left = this.parsePower();
+        let left = this.parseUnary();
         while (this.current && this.current.type === 'op' && this.current.value === '*') {
             this.advance();
-            const right = this.parsePower();
-            left = new BinOp('*', left, right);
-        }
-        return left;
-    }
-
-    parsePower() {
-        let left = this.parseUnary();
-        while (this.current && this.current.type === 'op' && this.current.value === '^') {
-            this.advance();
             const right = this.parseUnary();
-            left = new BinOp('^', left, right);
+            left = new BinOp('*', left, right);
         }
         return left;
     }
@@ -133,23 +122,36 @@ class Parser {
             this.advance();
             return this.parseUnary();
         }
-        return this.parsePrimary();
+        return this.parsePower();
+    }
+
+    parsePower() {
+        let left = this.parsePrimary();
+        if (this.current && this.current.type === 'op' && this.current.value === '^') {
+            this.advance();
+            const right = this.parseUnary();
+            left = new BinOp('^', left, right);
+        }
+        return left;
     }
 
     parsePrimary() {
         if (this.current === null) {
             throw new Error('Unexpected end of expression');
         }
+
         if (this.current.type === 'num') {
             const v = this.current.value;
             this.advance();
             return new Num(v);
         }
+
         if (this.current.type === 'var') {
             const v = this.current.value;
             this.advance();
             return new Var(v);
         }
+
         if (this.current.type === 'op' && this.current.value === '(') {
             this.advance();
             const inner = this.parseExpr();
@@ -159,6 +161,7 @@ class Parser {
             this.advance();
             return inner;
         }
+
         throw new Error(`Unexpected token: ${JSON.stringify(this.current)}`);
     }
 
@@ -168,31 +171,79 @@ class Parser {
 }
 
 class Num {
-    constructor(value) { this.value = value; }
-    derivative() { return new Num(0); }
-    simplify() { return this; }
-    toString() { return String(this.value); }
+    constructor(value) {
+        this.value = value;
+    }
+
+    derivative() {
+        return new Num(0);
+    }
+
+    simplify() {
+        return this;
+    }
+
+    getPrecedence() {
+        return 5;
+    }
+
+    toString() {
+        return String(this.value);
+    }
 }
 
 class Var {
-    constructor(name) { this.name = name; }
+    constructor(name) {
+        this.name = name;
+    }
+
     derivative(v) {
         return this.name === v ? new Num(1) : new Num(0);
     }
-    simplify() { return this; }
-    toString() { return this.name; }
+
+    simplify() {
+        return this;
+    }
+
+    getPrecedence() {
+        return 5;
+    }
+
+    toString() {
+        return this.name;
+    }
 }
 
 class Neg {
-    constructor(inner) { this.inner = inner; }
-    derivative(v) { return new Neg(this.inner.derivative(v)); }
+    constructor(inner) {
+        this.inner = inner;
+    }
+
+    derivative(v) {
+        return new Neg(this.inner.derivative(v));
+    }
+
     simplify() {
         const s = this.inner.simplify();
+
         if (s instanceof Num) return new Num(-s.value);
         if (s instanceof Neg) return s.inner;
+
+        if (s instanceof BinOp && s.op === '*') {
+            return new BinOp('*', new Num(-1), s).simplify();
+        }
+
         return new Neg(s);
     }
-    toString() { return `-${this.inner}`; }
+
+    getPrecedence() {
+        return 3;
+    }
+
+    toString() {
+        const inner = formatNode(this.inner, this.getPrecedence(), false, 'neg');
+        return `-${inner}`;
+    }
 }
 
 class BinOp {
@@ -210,7 +261,6 @@ class BinOp {
         }
 
         if (op === '*') {
-            // (uv)' = u'v + uv'
             return new BinOp(
                 '+',
                 new BinOp('*', left.derivative(v), right),
@@ -219,19 +269,24 @@ class BinOp {
         }
 
         if (op === '^') {
-            if (!(right instanceof Num)) {
+            const exp = right.simplify();
+
+            if (!(exp instanceof Num) || !Number.isInteger(exp.value)) {
                 throw new Error('Only integer constant exponents are supported');
             }
-            const n = right.value;
-            if (!Number.isInteger(n)) {
-                throw new Error('Exponent must be an integer');
-            }
+
+            const n = exp.value;
             if (n === 0) return new Num(0);
+
             const nMinus1 = new Num(n - 1);
+
             return new BinOp(
                 '*',
-                new BinOp('*', new Num(n),
-                    new BinOp('^', left, nMinus1)),
+                new BinOp(
+                    '*',
+                    new Num(n),
+                    new BinOp('^', left, nMinus1)
+                ),
                 left.derivative(v)
             );
         }
@@ -251,13 +306,42 @@ class BinOp {
             if (lNum && rNum) return new Num(l.value + r.value);
             if (lNum && l.value === 0) return r;
             if (rNum && r.value === 0) return l;
+
+            if (r instanceof Neg) return new BinOp('-', l, r.inner).simplify();
+            if (l instanceof Neg) return new BinOp('-', r, l.inner).simplify();
+
+            const lb = BinOp._coefBase(l);
+            const rb = BinOp._coefBase(r);
+
+            if (lb.base && rb.base && BinOp._same(lb.base, rb.base)) {
+                const c = lb.coef + rb.coef;
+                if (c === 0) return new Num(0);
+                if (c === 1) return lb.base;
+                if (c === -1) return new Neg(lb.base).simplify();
+                return new BinOp('*', new Num(c), lb.base).simplify();
+            }
+
             return new BinOp('+', l, r);
         }
 
         if (op === '-') {
             if (lNum && rNum) return new Num(l.value - r.value);
             if (rNum && r.value === 0) return l;
-            if (lNum && l.value === 0) return new Neg(r);
+            if (lNum && l.value === 0) return new Neg(r).simplify();
+
+            if (r instanceof Neg) return new BinOp('+', l, r.inner).simplify();
+
+            const lb = BinOp._coefBase(l);
+            const rb = BinOp._coefBase(r);
+
+            if (lb.base && rb.base && BinOp._same(lb.base, rb.base)) {
+                const c = lb.coef - rb.coef;
+                if (c === 0) return new Num(0);
+                if (c === 1) return lb.base;
+                if (c === -1) return new Neg(lb.base).simplify();
+                return new BinOp('*', new Num(c), lb.base).simplify();
+            }
+
             return new BinOp('-', l, r);
         }
 
@@ -268,38 +352,70 @@ class BinOp {
             if (rNum && r.value === 1) return l;
 
             const flat = BinOp._flattenMul(l, r);
-            if (flat.coef !== 1) {
-                if (flat.coef === 0) return new Num(0);
-                if (flat.rest.length === 0) return new Num(flat.coef);
 
-                const restExpr = flat.rest.reduce(
-                    (acc, cur) => (acc === null ? cur : new BinOp('*', acc, cur)),
-                    null
-                );
-                if (flat.coef === 1) return restExpr;
-                return new BinOp('*', new Num(flat.coef), restExpr);
-            }
-            if (flat.rest.length === 0) return new Num(1);
+            if (flat.coef === 0) return new Num(0);
+            if (flat.rest.length === 0) return new Num(flat.coef);
+
             const restExpr = flat.rest.reduce(
                 (acc, cur) => (acc === null ? cur : new BinOp('*', acc, cur)),
                 null
             );
-            return restExpr;
+
+            if (flat.coef === 1) return restExpr;
+            if (flat.coef === -1) return new Neg(restExpr);
+            return new BinOp('*', new Num(flat.coef), restExpr);
         }
 
         if (op === '^') {
             if (lNum && rNum) return new Num(Math.pow(l.value, r.value));
             if (rNum && r.value === 0) return new Num(1);
             if (rNum && r.value === 1) return l;
-            // x^n^n is left-assoc; keep as-is
             return new BinOp('^', l, r);
         }
 
         throw new Error(`Unsupported operator: ${op}`);
     }
 
+    getPrecedence() {
+        return {
+            '+': 1,
+            '-': 1,
+            '*': 2,
+            '^': 4
+        }[this.op];
+    }
+
     toString() {
-        return `${this.left}${this.op}${this.right}`;
+        const prec = this.getPrecedence();
+        const left = formatNode(this.left, prec, false, this.op);
+        const right = formatNode(this.right, prec, true, this.op);
+        return `${left}${this.op}${right}`;
+    }
+
+    static _same(a, b) {
+        return a.toString() === b.toString();
+    }
+
+    static _coefBase(node) {
+        if (node instanceof Num) {
+            return {coef: node.value, base: null};
+        }
+
+        if (node instanceof Neg) {
+            const cb = BinOp._coefBase(node.inner);
+            return {coef: -cb.coef, base: cb.base};
+        }
+
+        if (node instanceof BinOp && node.op === '*') {
+            if (node.left instanceof Num) {
+                return {coef: node.left.value, base: node.right};
+            }
+            if (node.right instanceof Num) {
+                return {coef: node.right.value, base: node.left};
+            }
+        }
+
+        return {coef: 1, base: node};
     }
 
     static _flattenMul(left, right) {
@@ -311,12 +427,14 @@ class BinOp {
                 out.push(node);
             }
         };
+
         const nodes = [];
         collect(left, nodes);
         collect(right, nodes);
 
         let coef = 1;
         const rest = [];
+
         for (const n of nodes) {
             if (n instanceof Num) {
                 coef *= n.value;
@@ -327,8 +445,32 @@ class BinOp {
                 rest.push(n);
             }
         }
+
         return {coef, rest};
     }
+}
+
+function formatNode(node, parentPrec, isRight, parentOp) {
+    const nodePrec = node.getPrecedence ? node.getPrecedence() : 5;
+    let needParen = false;
+
+    if (nodePrec < parentPrec) {
+        needParen = true;
+    } else if (nodePrec === parentPrec) {
+        if (parentOp === '-' && isRight) {
+            needParen = true;
+        } else if (parentOp === '^' && !isRight) {
+            needParen = true;
+        }
+    }
+
+    // x^-2 можно печатать без скобок
+    if (node instanceof Neg && parentOp === '^' && isRight) {
+        needParen = false;
+    }
+
+    const str = node.toString();
+    return needParen ? `(${str})` : str;
 }
 
 export {MiniMaple};

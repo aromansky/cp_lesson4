@@ -1,21 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Lesson 4</title>
+    <title>Symbolic Diff</title>
     <meta charset="UTF-8"/>
-
     <script src="src/index.js" type="module"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; }
+        input { width: 100%; padding: 8px; font-size: 16px; box-sizing: border-box; }
+        button { padding: 8px 16px; font-size: 16px; margin-top: 8px; cursor: pointer; }
+        #result { margin-top: 1rem; padding: 12px; background: #f4f4f4;
+                  border-radius: 4px; font-family: monospace; font-size: 18px; }
+        .error { color: #c00; }
+    </style>
 </head>
-
 <body>
-<h1>Implement the symbolic diff here</h1>
-<div id="container">
-
-</div>
-<div>
-    <button id="demoButton">
-        Add something
-    </button>
-</div>
+    <h1>Symbolic Derivative</h1>
+    <div>
+        <input id="expr" type="text" placeholder="e.g. 4*x^3-x^2" value="4*x^3-x^2"/>
+    </div>
+    <div>
+        <input id="var" type="text" placeholder="variable, e.g. x" value="x"/>
+    </div>
+    <button id="runBtn">Differentiate</button>
+    <div id="result"></div>
 </body>
 </html>
